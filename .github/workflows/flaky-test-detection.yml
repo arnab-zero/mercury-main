@@ -82,12 +82,17 @@ jobs:
             -H "ngrok-skip-browser-warning: true" \
             --data-binary @request.json)
           CURL_EXIT=$?
-          set -e
 
           echo "Curl exit code: $CURL_EXIT"
           echo "HTTP Status: $HTTP_CODE"
 
           if [ $CURL_EXIT -ne 0 ]; then
+            echo "Curl failed with exit code $CURL_EXIT"
+            echo "Creating error response"
+            echo '{"status":"error","error_type":"API_CALL_FAILED","error_message":"Failed to reach FlakeFix API"}' > response.json
+          fi
+
+          set -e  # Re-enable exit on error AFTER handling curl failure
             echo "Curl failed with exit code $CURL_EXIT"
             echo "Creating error response"
             echo '{"status":"error","error_type":"API_CALL_FAILED","error_message":"Failed to reach FlakeFix API"}' > response.json
