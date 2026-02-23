@@ -93,10 +93,6 @@ jobs:
           fi
 
           set -e  # Re-enable exit on error AFTER handling curl failure
-            echo "Curl failed with exit code $CURL_EXIT"
-            echo "Creating error response"
-            echo '{"status":"error","error_type":"API_CALL_FAILED","error_message":"Failed to reach FlakeFix API"}' > response.json
-          fi
 
           echo "Response:"
           cat response.json
