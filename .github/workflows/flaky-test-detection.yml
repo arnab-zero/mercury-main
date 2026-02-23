@@ -1,0 +1,257 @@
+name: FlakeFix - Flaky Test Detection
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - "**/*Test.java"
+      - "**/Test*.java"
+
+jobs:
+  detect-flaky-tests:
+    name: Detect Flaky Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Security: Block fork PRs to prevent API key theft
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed test files
+        id: detect-tests
+        run: |
+          # Get changed files between base and head
+          git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} > changed_files.txt
+
+          # Filter for test files
+          grep -E '(Test\.java|Test.*\.java)' changed_files.txt > test_files.txt || true
+
+          # Get first test file
+          TEST_FILE=$(head -n 1 test_files.txt || echo "")
+
+          if [ -z "$TEST_FILE" ]; then
+            echo "No test files changed"
+            echo "has_tests=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found test file: $TEST_FILE"
+            echo "has_tests=true" >> $GITHUB_OUTPUT
+            echo "test_file=$TEST_FILE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Call FlakeFix API
+        id: flakefix
+        if: steps.detect-tests.outputs.has_tests == 'true'
+        run: |
+          # Prepare request payload
+          cat > request.json <<EOF
+          {
+            "repo_url": "${{ github.event.pull_request.head.repo.clone_url }}",
+            "pr_head_ref": "${{ github.event.pull_request.head.ref }}",
+            "test_file": "${{ steps.detect-tests.outputs.test_file }}",
+            "pr_number": ${{ github.event.pull_request.number }},
+            "commit_sha": "${{ github.event.pull_request.head.sha }}"
+          }
+          EOF
+
+          echo "Request payload:"
+          cat request.json
+
+          # Call API
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
+            -X POST "${{ secrets.FLAKEFIX_API_URL }}/api/analyze" \
+            -H "Authorization: Bearer ${{ secrets.FLAKEFIX_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d @request.json)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response:"
+          cat response.json
+
+          # Parse response
+          STATUS=$(jq -r '.status' response.json)
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+          if [ "$STATUS" = "success" ]; then
+            IS_FLAKY=$(jq -r '.is_flaky' response.json)
+            CONFIDENCE=$(jq -r '.confidence' response.json)
+            LABEL=$(jq -r '.label' response.json)
+            TEST_METHOD=$(jq -r '.test_method' response.json)
+            
+            echo "is_flaky=$IS_FLAKY" >> $GITHUB_OUTPUT
+            echo "confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
+            echo "label=$LABEL" >> $GITHUB_OUTPUT
+            echo "test_method=$TEST_METHOD" >> $GITHUB_OUTPUT
+            
+            # Save full response for comment
+            cat response.json > flakefix_result.json
+          else
+            ERROR_TYPE=$(jq -r '.error_type' response.json)
+            ERROR_MSG=$(jq -r '.error_message' response.json)
+            
+            echo "error_type=$ERROR_TYPE" >> $GITHUB_OUTPUT
+            echo "error_message=$ERROR_MSG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post PR Comment
+        if: steps.detect-tests.outputs.has_tests == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const status = '${{ steps.flakefix.outputs.status }}';
+            const testFile = '${{ steps.detect-tests.outputs.test_file }}';
+
+            // Find existing FlakeFix comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🔍 FlakeFix Analysis')
+            );
+
+            let commentBody = '';
+
+            if (status === 'success') {
+              const isFlaky = '${{ steps.flakefix.outputs.is_flaky }}' === 'true';
+              const confidence = '${{ steps.flakefix.outputs.confidence }}';
+              const label = '${{ steps.flakefix.outputs.label }}';
+              const testMethod = '${{ steps.flakefix.outputs.test_method }}';
+              
+              if (isFlaky) {
+                // Read full response for details
+                const result = JSON.parse(fs.readFileSync('flakefix_result.json', 'utf8'));
+                
+                commentBody = `## 🔍 FlakeFix Analysis Results
+
+            ⚠️ **Potential Flaky Test Detected**
+
+            **Test File:** \`${testFile}\`
+            **Test Method:** \`${testMethod}\`
+            **Flaky Type:** \`${label}\`
+            **Confidence:** \`${confidence}\`
+
+            ### 📋 Details
+
+            **Justification:**
+            ${result.justification}
+
+            **Code Patterns Detected:**
+            ${result.code_patterns.map(p => `- ${p}`).join('\n')}
+
+            **Recommendation:**
+            ${result.recommendation}
+            `;
+
+                // Add patch if available
+                if (result.patch) {
+                  commentBody += `
+
+            ### 🔧 Suggested Fix
+
+            \`\`\`java
+            ${result.patch}
+            \`\`\`
+            `;
+                }
+                
+                // Add merge blocking notice
+                if (confidence === 'HIGH') {
+                  commentBody += `
+
+            ---
+            ⛔ **Merge Blocked:** This PR cannot be merged until the flaky test is fixed (HIGH confidence detection).
+            `;
+                } else {
+                  commentBody += `
+
+            ---
+            ✅ **Merge Allowed:** This detection has ${confidence} confidence. Please review and fix if appropriate.
+            `;
+                }
+              } else {
+                commentBody = `## 🔍 FlakeFix Analysis Results
+
+            ✅ **No Flaky Tests Detected**
+
+            **Test File:** \`${testFile}\`
+            **Test Method:** \`${testMethod}\`
+
+            The test appears to be stable. No flakiness patterns detected.
+            `;
+              }
+            } else {
+              // Error case
+              const errorType = '${{ steps.flakefix.outputs.error_type }}';
+              const errorMsg = '${{ steps.flakefix.outputs.error_message }}';
+              
+              commentBody = `## 🔍 FlakeFix Analysis Results
+
+            ❌ **Analysis Error**
+
+            **Test File:** \`${testFile}\`
+            **Error Type:** \`${errorType}\`
+
+            **Error Message:**
+            \`\`\`
+            ${errorMsg}
+            \`\`\`
+
+            ---
+            ℹ️ The PR can still be merged. This error does not block the merge process.
+            `;
+            }
+
+            // Update existing comment or create new one
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+
+      - name: Set Check Status
+        if: steps.detect-tests.outputs.has_tests == 'true'
+        run: |
+          STATUS="${{ steps.flakefix.outputs.status }}"
+          IS_FLAKY="${{ steps.flakefix.outputs.is_flaky }}"
+          CONFIDENCE="${{ steps.flakefix.outputs.confidence }}"
+
+          echo "Status: $STATUS"
+          echo "Is Flaky: $IS_FLAKY"
+          echo "Confidence: $CONFIDENCE"
+
+          # Pass check if:
+          # - Analysis failed (error)
+          # - Test is not flaky
+          # - Confidence is not HIGH
+          if [ "$STATUS" != "success" ]; then
+            echo "✅ Check passed: Analysis error (does not block merge)"
+            exit 0
+          elif [ "$IS_FLAKY" != "true" ]; then
+            echo "✅ Check passed: No flaky test detected"
+            exit 0
+          elif [ "$CONFIDENCE" != "HIGH" ]; then
+            echo "✅ Check passed: Flaky test detected but confidence is $CONFIDENCE (not HIGH)"
+            exit 0
+          else
+            echo "❌ Check failed: HIGH confidence flaky test detected - merge blocked"
+            exit 1
+          fi
