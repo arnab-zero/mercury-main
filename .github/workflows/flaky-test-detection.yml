@@ -61,20 +61,43 @@ jobs:
           echo "Request payload:"
           cat request.json
 
+          # Test API connectivity first
+          echo "Testing API connectivity..."
+          echo "API URL: ${{ secrets.FLAKEFIX_API_URL }}"
+          curl -s -H "ngrok-skip-browser-warning: true" "${{ secrets.FLAKEFIX_API_URL }}/" || echo "Health check failed"
+
           # Call API (add ngrok-skip-browser-warning header for ngrok free tier)
+          set +e  # Don't fail on curl error
+
+          # Use a variable to avoid issues with secret expansion
+          API_URL="${{ secrets.FLAKEFIX_API_URL }}"
+          API_KEY="${{ secrets.FLAKEFIX_API_KEY }}"
+
+          echo "Calling API at: ${API_URL}/api/analyze"
+
           HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST "${{ secrets.FLAKEFIX_API_URL }}/api/analyze" \
-            -H "Authorization: Bearer ${{ secrets.FLAKEFIX_API_KEY }}" \
+            -X POST "${API_URL}/api/analyze" \
+            -H "Authorization: Bearer ${API_KEY}" \
             -H "Content-Type: application/json" \
             -H "ngrok-skip-browser-warning: true" \
-            -d @request.json)
+            --data-binary @request.json)
+          CURL_EXIT=$?
+          set -e
 
+          echo "Curl exit code: $CURL_EXIT"
           echo "HTTP Status: $HTTP_CODE"
+
+          if [ $CURL_EXIT -ne 0 ]; then
+            echo "Curl failed with exit code $CURL_EXIT"
+            echo "Creating error response"
+            echo '{"status":"error","error_type":"API_CALL_FAILED","error_message":"Failed to reach FlakeFix API"}' > response.json
+          fi
+
           echo "Response:"
           cat response.json
 
           # Parse response
-          STATUS=$(jq -r '.status' response.json)
+          STATUS=$(jq -r '.status' response.json 2>/dev/null || echo "error")
           echo "status=$STATUS" >> $GITHUB_OUTPUT
 
           if [ "$STATUS" = "success" ]; then
@@ -116,7 +139,7 @@ jobs:
 
             const botComment = comments.data.find(comment => 
               comment.user.type === 'Bot' && 
-              comment.body.includes('FlakeFix Analysis')
+              comment.body.includes('🔍 FlakeFix Analysis')
             );
 
             let commentBody = '';
@@ -133,14 +156,14 @@ jobs:
                 
                 commentBody = `## 🔍 FlakeFix Analysis Results
 
-              **Potential Flaky Test Detected**
+            ⚠️ **Potential Flaky Test Detected**
 
             **Test File:** \`${testFile}\`
             **Test Method:** \`${testMethod}\`
             **Flaky Type:** \`${label}\`
             **Confidence:** \`${confidence}\`
 
-            ### Details
+            ### 📋 Details
 
             **Justification:**
             ${result.justification}
@@ -156,7 +179,7 @@ jobs:
                 if (result.patch) {
                   commentBody += `
 
-            ### Suggested Fix
+            ### 🔧 Suggested Fix
 
             \`\`\`java
             ${result.patch}
@@ -169,19 +192,19 @@ jobs:
                   commentBody += `
 
             ---
-            **Merge Blocked:** This PR cannot be merged until the flaky test is fixed (HIGH confidence detection).
+            ⛔ **Merge Blocked:** This PR cannot be merged until the flaky test is fixed (HIGH confidence detection).
             `;
                 } else {
                   commentBody += `
 
             ---
-            **Merge Allowed:** This detection has ${confidence} confidence. Please review and fix if appropriate.
+            ✅ **Merge Allowed:** This detection has ${confidence} confidence. Please review and fix if appropriate.
             `;
                 }
               } else {
-                commentBody = `## FlakeFix Analysis Results
+                commentBody = `## 🔍 FlakeFix Analysis Results
 
-            **No Flaky Tests Detected**
+            ✅ **No Flaky Tests Detected**
 
             **Test File:** \`${testFile}\`
             **Test Method:** \`${testMethod}\`
@@ -196,7 +219,7 @@ jobs:
               
               commentBody = `## 🔍 FlakeFix Analysis Results
 
-            **Analysis Error**
+            ❌ **Analysis Error**
 
             **Test File:** \`${testFile}\`
             **Error Type:** \`${errorType}\`
@@ -207,7 +230,7 @@ jobs:
             \`\`\`
 
             ---
-            The PR can still be merged. This error does not block the merge process.
+            ℹ️ The PR can still be merged. This error does not block the merge process.
             `;
             }
 
@@ -244,15 +267,15 @@ jobs:
           # - Test is not flaky
           # - Confidence is not HIGH
           if [ "$STATUS" != "success" ]; then
-            echo "Check passed: Analysis error (does not block merge)"
+            echo "✅ Check passed: Analysis error (does not block merge)"
             exit 0
           elif [ "$IS_FLAKY" != "true" ]; then
-            echo "Check passed: No flaky test detected"
+            echo "✅ Check passed: No flaky test detected"
             exit 0
           elif [ "$CONFIDENCE" != "HIGH" ]; then
-            echo "Check passed: Flaky test detected but confidence is $CONFIDENCE (not HIGH)"
+            echo "✅ Check passed: Flaky test detected but confidence is $CONFIDENCE (not HIGH)"
             exit 0
           else
-            echo "Check failed: HIGH confidence flaky test detected - merge blocked"
+            echo "❌ Check failed: HIGH confidence flaky test detected - merge blocked"
             exit 1
           fi
