@@ -61,11 +61,12 @@ jobs:
           echo "Request payload:"
           cat request.json
 
-          # Call API
+          # Call API (add ngrok-skip-browser-warning header for ngrok free tier)
           HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
             -X POST "${{ secrets.FLAKEFIX_API_URL }}/api/analyze" \
             -H "Authorization: Bearer ${{ secrets.FLAKEFIX_API_KEY }}" \
             -H "Content-Type: application/json" \
+            -H "ngrok-skip-browser-warning: true" \
             -d @request.json)
 
           echo "HTTP Status: $HTTP_CODE"
@@ -115,7 +116,7 @@ jobs:
 
             const botComment = comments.data.find(comment => 
               comment.user.type === 'Bot' && 
-              comment.body.includes('🔍 FlakeFix Analysis')
+              comment.body.includes('FlakeFix Analysis')
             );
 
             let commentBody = '';
@@ -132,14 +133,14 @@ jobs:
                 
                 commentBody = `## 🔍 FlakeFix Analysis Results
 
-            ⚠️ **Potential Flaky Test Detected**
+              **Potential Flaky Test Detected**
 
             **Test File:** \`${testFile}\`
             **Test Method:** \`${testMethod}\`
             **Flaky Type:** \`${label}\`
             **Confidence:** \`${confidence}\`
 
-            ### 📋 Details
+            ### Details
 
             **Justification:**
             ${result.justification}
@@ -155,7 +156,7 @@ jobs:
                 if (result.patch) {
                   commentBody += `
 
-            ### 🔧 Suggested Fix
+            ### Suggested Fix
 
             \`\`\`java
             ${result.patch}
@@ -168,19 +169,19 @@ jobs:
                   commentBody += `
 
             ---
-            ⛔ **Merge Blocked:** This PR cannot be merged until the flaky test is fixed (HIGH confidence detection).
+            **Merge Blocked:** This PR cannot be merged until the flaky test is fixed (HIGH confidence detection).
             `;
                 } else {
                   commentBody += `
 
             ---
-            ✅ **Merge Allowed:** This detection has ${confidence} confidence. Please review and fix if appropriate.
+            **Merge Allowed:** This detection has ${confidence} confidence. Please review and fix if appropriate.
             `;
                 }
               } else {
-                commentBody = `## 🔍 FlakeFix Analysis Results
+                commentBody = `## FlakeFix Analysis Results
 
-            ✅ **No Flaky Tests Detected**
+            **No Flaky Tests Detected**
 
             **Test File:** \`${testFile}\`
             **Test Method:** \`${testMethod}\`
@@ -195,7 +196,7 @@ jobs:
               
               commentBody = `## 🔍 FlakeFix Analysis Results
 
-            ❌ **Analysis Error**
+            **Analysis Error**
 
             **Test File:** \`${testFile}\`
             **Error Type:** \`${errorType}\`
@@ -206,7 +207,7 @@ jobs:
             \`\`\`
 
             ---
-            ℹ️ The PR can still be merged. This error does not block the merge process.
+            The PR can still be merged. This error does not block the merge process.
             `;
             }
 
@@ -243,15 +244,15 @@ jobs:
           # - Test is not flaky
           # - Confidence is not HIGH
           if [ "$STATUS" != "success" ]; then
-            echo "✅ Check passed: Analysis error (does not block merge)"
+            echo "Check passed: Analysis error (does not block merge)"
             exit 0
           elif [ "$IS_FLAKY" != "true" ]; then
-            echo "✅ Check passed: No flaky test detected"
+            echo "Check passed: No flaky test detected"
             exit 0
           elif [ "$CONFIDENCE" != "HIGH" ]; then
-            echo "✅ Check passed: Flaky test detected but confidence is $CONFIDENCE (not HIGH)"
+            echo "Check passed: Flaky test detected but confidence is $CONFIDENCE (not HIGH)"
             exit 0
           else
-            echo "❌ Check failed: HIGH confidence flaky test detected - merge blocked"
+            echo "Check failed: HIGH confidence flaky test detected - merge blocked"
             exit 1
           fi
