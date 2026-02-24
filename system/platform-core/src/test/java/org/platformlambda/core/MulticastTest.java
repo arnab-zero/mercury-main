@@ -34,8 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 // Added changes
 
-class MulticastTestttttttttt {
-    private static final Logger log = LoggerFactory.getLogger(MulticastTestttttttttt.class);
+class MulticastTest {
+    private static final Logger log = LoggerFactory.getLogger(MulticastTest.class);
     private static final String MY_ROUTE = "my_route";
     private static final int WAIT_INTERVAL = 300;
 
