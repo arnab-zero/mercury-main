@@ -33,11 +33,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 // Added changes
-// Another comment
-// Comment 3
-// comment 4
-// Comment 5
-// Comment 6
 
 class MulticastTest {
     private static final Logger log = LoggerFactory.getLogger(MulticastTest.class);
