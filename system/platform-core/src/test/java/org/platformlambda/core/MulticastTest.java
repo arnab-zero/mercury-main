@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 // Comment 1
 // Comment 2
 // Comment 3
+// Comment 4
 
 class MulticastTest {
     private static final Logger log = LoggerFactory.getLogger(MulticastTest.class);
