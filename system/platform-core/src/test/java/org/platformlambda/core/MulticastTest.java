@@ -32,13 +32,21 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class MulticastTest {
+// Added changes
+// Comment 1
+// Comment 2
+// Comment 3
+// Comment 4
+
+class MulticastTest {
     private static final Logger log = LoggerFactory.getLogger(MulticastTest.class);
     private static final String MY_ROUTE = "my_route";
     private static final int WAIT_INTERVAL = 300;
+
     @BeforeClass
     public static void setup() throws InterruptedException {
-        // The multicast.yaml configuration will be loaded when the EventEmitter singleton initializes
+        // The multicast.yaml configuration will be loaded when the EventEmitter
+        // singleton initializes
         EventEmitter po = EventEmitter.getInstance();
         log.info("Unit test loaded with {}. Multicast ready? {}", po, po.isMulticastEnabled());
         int n = 0;
@@ -52,7 +60,7 @@ public class MulticastTest {
     @Test
     public void routingTest() throws IOException, InterruptedException {
         final EventEmitter po = EventEmitter.getInstance();
-        final String[] targets = {"v1.hello.service.1", "v1.hello.service.2"};
+        final String[] targets = { "v1.hello.service.1", "v1.hello.service.2" };
         final String TEXT = "ok";
         final AtomicInteger counter = new AtomicInteger(0);
         final BlockingQueue<Boolean> completion = new ArrayBlockingQueue<>(1);
@@ -70,14 +78,15 @@ public class MulticastTest {
         platform.waitForProvider("v1.hello.world", 5).onSuccess(bench::offer);
         boolean available = Boolean.TRUE.equals(bench.poll(5, TimeUnit.SECONDS));
         Assert.assertTrue(available);
-        for (String t: targets) {
+        for (String t : targets) {
             platform.registerPrivate(t, f, 1);
         }
-        // Event targeted to v1.hello.world will be multicasted to v1.hello.service.1 and v1.hello.service.2
+        // Event targeted to v1.hello.world will be multicasted to v1.hello.service.1
+        // and v1.hello.service.2
         po.send("v1.hello.world", TEXT);
         completion.poll(5, TimeUnit.SECONDS);
         Assert.assertEquals(2, result.size());
-        for (Map.Entry<String, Object> kv: result.entrySet()) {
+        for (Map.Entry<String, Object> kv : result.entrySet()) {
             Assert.assertEquals(TEXT, kv.getValue());
             log.info("Result from {} is correct", kv.getKey());
         }
